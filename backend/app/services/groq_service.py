@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from app.agents.prompts import GROQ_SYSTEM_PROMPT
 from app.core.config import Settings
-from app.schemas.diagnosis import DiseaseExplanation
+from app.schemas.diagnosis import DiseaseExplanationDraft
 
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ class GroqService:
         )
         self._chain = None
         if self._configured:
-            parser = PydanticOutputParser(pydantic_object=DiseaseExplanation)
+            parser = PydanticOutputParser(pydantic_object=DiseaseExplanationDraft)
             prompt = ChatPromptTemplate.from_messages(
                 [
                     ("system", GROQ_SYSTEM_PROMPT + "\n\n{format_instructions}"),
@@ -89,8 +89,8 @@ class GroqService:
                 timeout=self.timeout_seconds,
                 max_retries=settings.groq_max_retries,
                 **(
-                    {"reasoning_effort": settings.groq_reasoning_effort}
-                    if settings.groq_reasoning_effort
+                    {"reasoning_effort": settings.resolved_reasoning_effort}
+                    if settings.resolved_reasoning_effort
                     else {}
                 ),
             )
@@ -122,12 +122,25 @@ class GroqService:
                 )
                 model_ids = {str(getattr(item, "id", "") or "") for item in response.data}
                 self._health_available = self.model in model_ids
-            except Exception:
+                if not self._health_available:
+                    logger.warning(
+                        "Groq model %s is not in the account's model list; synthesis will be skipped",
+                        self.model,
+                    )
+            except Exception as exc:
+                # A slow probe is not proof of a bad credential. Log it so the real
+                # cause is visible instead of silently reporting "unavailable".
                 self._health_available = False
+                logger.warning(
+                    "Groq availability probe failed after %.1fs (%s: %s)",
+                    self.health_timeout_seconds,
+                    type(exc).__name__,
+                    exc,
+                )
             self._health_checked_at = time.monotonic()
             return self._health_available
 
-    async def generate_explanation(self, evidence_payload: dict) -> DiseaseExplanation:
+    async def generate_explanation(self, evidence_payload: dict) -> DiseaseExplanationDraft:
         if not self._configured or self._chain is None:
             raise GroqNotConfiguredError("The Groq explanation service is not configured.")
         evidence_context, trimmed = self._fit_payload(evidence_payload)
@@ -155,7 +168,7 @@ class GroqService:
                         ),
                         timeout=self.timeout_seconds,
                     )
-                return DiseaseExplanation.model_validate(result)
+                return DiseaseExplanationDraft.model_validate(result)
             except (OutputParserException, ValidationError) as exc:
                 if attempt == 1:
                     raise GroqInvalidResponseError(

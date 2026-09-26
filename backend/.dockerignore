@@ -1,0 +1,38 @@
+# Secrets and local overrides are injected at runtime, never baked into the image.
+.env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime state
+uploads/
+*.log
+
+# Model artifacts (checkpoint + class labels) are baked into the image, so the
+# API can start on platforms that do not bind mount a host directory.
+# models/ is deliberately NOT excluded here.
+
+# VCS and editor metadata
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Docs are not needed at runtime
+README.md

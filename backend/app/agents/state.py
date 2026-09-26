@@ -1,7 +1,7 @@
 import operator
 from typing import Annotated, Any, Literal, TypedDict
 
-from app.schemas.diagnosis import DiseaseExplanation
+from app.schemas.diagnosis import DiseaseExplanation, DiseaseExplanationDraft
 from app.schemas.research import EvidenceReport, ResearchBundle, ResearchStatus
 
 
@@ -16,13 +16,15 @@ class PlantDiagnosisState(TypedDict, total=False):
     uncertain_prediction: bool
     crop: str
     plant: str
+    is_healthy_class: bool
     include_web_research: bool
     include_pesticides: bool
     disease_research: ResearchBundle
     treatment_research: ResearchBundle
     pesticide_research: ResearchBundle
     evidence: EvidenceReport
-    explanation: DiseaseExplanation | None
+    explanation: DiseaseExplanationDraft | None
+    final_explanation: DiseaseExplanation | None
     research_status: ResearchStatus
     groq_status: Literal["available", "unavailable", "disabled"]
     errors: Annotated[list[str], operator.add]

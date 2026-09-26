@@ -19,30 +19,38 @@ class AgentOutcome:
 
 
 def build_disease_graph(nodes: DiseaseAgentNodes):
-    """Compile the fan-out/fan-in evidence workflow."""
+    """Compile the fan-out/fan-in evidence workflow.
+
+    START -> validate_prediction -> extract_disease_context -> parallel_research
+          -> {disease_research, treatment_research, pesticide_research} (concurrent)
+          -> evidence_validation -> groq_explanation -> validate_structured_output -> END
+    """
 
     workflow = StateGraph(PlantDiagnosisState)
     workflow.add_node("validate_prediction", nodes.validate_prediction)
-    workflow.add_node("extract_crop_and_disease", nodes.extract_crop_and_disease)
+    workflow.add_node("extract_disease_context", nodes.extract_disease_context)
+    workflow.add_node("parallel_research", nodes.parallel_research)
     workflow.add_node("disease_research", nodes.disease_research)
     workflow.add_node("treatment_research", nodes.treatment_research)
     workflow.add_node("pesticide_research", nodes.pesticide_research)
     workflow.add_node("evidence_validation", nodes.evidence_validation)
-    workflow.add_node("generate_explanation", nodes.generate_explanation)
-    workflow.add_node("validate_final_response", nodes.validate_final_response)
+    workflow.add_node("groq_explanation", nodes.groq_explanation)
+    workflow.add_node("validate_structured_output", nodes.validate_structured_output)
 
     workflow.add_edge(START, "validate_prediction")
-    workflow.add_edge("validate_prediction", "extract_crop_and_disease")
-    workflow.add_edge("extract_crop_and_disease", "disease_research")
-    workflow.add_edge("extract_crop_and_disease", "treatment_research")
-    workflow.add_edge("extract_crop_and_disease", "pesticide_research")
+    workflow.add_edge("validate_prediction", "extract_disease_context")
+    workflow.add_edge("extract_disease_context", "parallel_research")
+    # The three research branches run concurrently and are joined before validation.
+    workflow.add_edge("parallel_research", "disease_research")
+    workflow.add_edge("parallel_research", "treatment_research")
+    workflow.add_edge("parallel_research", "pesticide_research")
     workflow.add_edge(
         ["disease_research", "treatment_research", "pesticide_research"],
         "evidence_validation",
     )
-    workflow.add_edge("evidence_validation", "generate_explanation")
-    workflow.add_edge("generate_explanation", "validate_final_response")
-    workflow.add_edge("validate_final_response", END)
+    workflow.add_edge("evidence_validation", "groq_explanation")
+    workflow.add_edge("groq_explanation", "validate_structured_output")
+    workflow.add_edge("validate_structured_output", END)
     return workflow.compile()
 
 
@@ -72,6 +80,7 @@ class DiseaseResearchAgent:
             "include_web_research": include_web_research,
             "include_pesticides": include_pesticides,
             "explanation": None,
+            "final_explanation": None,
             "research_status": "disabled",
             "groq_status": "disabled",
             "errors": [],
@@ -83,7 +92,7 @@ class DiseaseResearchAgent:
         pesticide = result.get("pesticide_research", _empty_bundle("pesticide"))
         evidence = result["evidence"]
         return AgentOutcome(
-            explanation=result.get("explanation"),
+            explanation=result.get("final_explanation"),
             research_status=result.get("research_status", "disabled"),
             groq_status=result.get("groq_status", "disabled"),
             research=DiagnosisResearch(

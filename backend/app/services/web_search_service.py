@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from urllib.parse import urlparse
 
 import httpx
+from tavily import AsyncTavilyClient
 
 from app.core.config import Settings
 from app.schemas.research import ResearchBundle, ResearchSource, SourceType
@@ -34,11 +35,14 @@ class WebSearchService:
             if settings.tavily_api_key
             else ""
         )
-        self._client = httpx.AsyncClient(
-            base_url=settings.tavily_base_url,
-            timeout=httpx.Timeout(self.timeout_seconds),
-            follow_redirects=False,
-            headers={"User-Agent": "plant-disease-evidence-api/2.0"},
+        self._client = AsyncTavilyClient(
+            api_key=self._api_key,
+            api_base_url=settings.tavily_base_url,
+            client=httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout_seconds),
+                follow_redirects=False,
+                headers={"User-Agent": "plant-disease-evidence-api/2.0"},
+            ),
         )
 
     @property
@@ -46,7 +50,7 @@ class WebSearchService:
         return self.provider == "tavily" and bool(self._api_key)
 
     async def close(self) -> None:
-        await self._client.aclose()
+        await self._client.close()
 
     async def check_available(self) -> bool:
         # Tavily has no quota-free readiness endpoint. This reports whether a supported
@@ -107,21 +111,16 @@ class WebSearchService:
         if self.provider != "tavily":
             raise WebSearchNotConfiguredError(f"Unsupported search provider: {self.provider}")
         async with self._request_slots:
-            response = await self._client.post(
-                "/search",
-                json={
-                "api_key": self._api_key,
-                "query": query,
-                "topic": "general",
-                "search_depth": "advanced",
-                "max_results": self.max_results,
-                "include_answer": False,
-                "include_raw_content": False,
-                    "include_images": False,
-                },
+            payload = await self._client.search(
+                query=query,
+                topic="general",
+                search_depth="advanced",
+                max_results=self.max_results,
+                include_answer=False,
+                include_raw_content=False,
+                include_images=False,
+                timeout=self.timeout_seconds,
             )
-        response.raise_for_status()
-        payload = response.json()
         results = payload.get("results", [])
         if not isinstance(results, list):
             raise WebSearchError("The search provider returned an invalid result list.")
@@ -154,22 +153,80 @@ class WebSearchService:
         return normalized
 
 
+PAKISTAN_AUTHORITATIVE_HOSTS = (
+    "plantprotection.gov.pk",
+    "dpp.gov.pk",
+    "dpp.punjab.gov.pk",
+    "mopcp.gov.pk",
+    "moa.gov.pk",
+    "na.gov.pk",
+    "psa.gov.pk",
+    "pakistaniplantprotection.org",
+    "aya.gov.pk",
+)
+
+_RESEARCH_INSTITUTION_HOSTS = (
+    "cgiar.org",
+    "cabi.org",
+    "cimmyt.org",
+    "irri.org",
+    "cipotato.org",
+    "icrisat.org",
+    "icar.gov.in",
+    "usda.gov",
+    "europa.eu",
+)
+
+_PEER_REVIEWED_HOSTS = (
+    "doi.org",
+    "sciencedirect.com",
+    "springer.com",
+    "link.springer.com",
+    "wiley.com",
+    "onlinelibrary.wiley.com",
+    "tandfonline.com",
+    "mdpi.com",
+    "frontiersin.org",
+    "plos.org",
+    "ncbi.nlm.nih.gov",
+    "pubmed.ncbi.nlm.nih.gov",
+    "apsnet.org",
+    "apsjournals.apsnet.org",
+)
+
+
 def classify_source(hostname: str, title: str) -> tuple[SourceType, bool]:
+    """Rank government, extension, FAO, and research sources above general web results."""
     host = hostname.lower().removeprefix("www.")
     title_lower = title.casefold()
     if (
         host.endswith(".gov")
         or ".gov." in host
-        or host.endswith("gov.pk")
+        or host.endswith(".gov.pk")
+        or host.endswith(".edu.pk")
+        or host.endswith(".ac.pk")
+        or any(host == name or host.endswith(f".{name}") for name in PAKISTAN_AUTHORITATIVE_HOSTS)
         or "department of plant protection" in title_lower
     ):
         return "government", True
-    if host.endswith(".edu") or ".edu." in host or "extension" in host or "extension" in title_lower:
+    if (
+        host.endswith(".edu")
+        or ".edu." in host
+        or "extension" in host
+        or "extension" in title_lower
+    ):
         return "university_extension", True
-    if host == "fao.org" or host.endswith(".fao.org"):
+    if host == "fao.org" or host.endswith(".fao.org") or host.endswith(".who.int"):
         return "international_organization", True
-    if any(name in host for name in ("cgiar.org", "cabi.org", "cimmyt.org", "irri.org", "cipotato.org")):
+    if any(name in host for name in _RESEARCH_INSTITUTION_HOSTS):
         return "research_institution", True
-    if any(name in host for name in ("doi.org", "sciencedirect.com", "springer.com", "wiley.com")):
+    if any(name in host for name in _PEER_REVIEWED_HOSTS):
         return "peer_reviewed", True
     return "other", False
+
+
+def is_official_registration_source(source: ResearchSource) -> bool:
+    """True only for government-hosted pages, which is what registration claims require."""
+    host = source.source.lower().removeprefix("www.")
+    return source.source_type == "government" and (host.endswith(".gov") or host.endswith(".gov.pk"))
+

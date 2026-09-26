@@ -1,0 +1,31 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: plant-disease-api:latest
+    container_name: plant-disease-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      MODEL_PATH: /app/models/efficientnet_v2_s_best.torchscript.pt
+      CLASS_LABELS_PATH: /app/models/class_labels.json
+      UPLOAD_DIR: /app/uploads
+      STORE_UPLOADS: "true"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    volumes:
+      # The trained checkpoint is mounted, never baked into the image.
+      - ./models:/app/models
+      - ./uploads:/app/uploads
+    # torch plus the checkpoint needs roughly 600MB resident; 2GB leaves headroom
+    # for concurrent image preprocessing.
+    mem_limit: 2g
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

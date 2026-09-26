@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.pesticide import PesticideRecommendation
+from app.schemas.pesticide import PesticideDraft, PesticideRecommendation
 from app.schemas.research import DiagnosisResearch, ResearchSource, ResearchStatus
 
 
@@ -39,6 +39,8 @@ class ManagementRecommendations(StrictSchema):
 
 
 class DiseaseExplanation(StrictSchema):
+    """Validated, client-facing explanation. Every field is evidence-backed."""
+
     summary: str = Field(min_length=1)
     diagnosis: ExplanationDiagnosis
     symptoms: list[str] = Field(default_factory=list)
@@ -49,6 +51,24 @@ class DiseaseExplanation(StrictSchema):
     recommendations: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     sources: list[ResearchSource] = Field(default_factory=list)
+
+
+class DiseaseExplanationDraft(StrictSchema):
+    """The explanation shape Groq is asked to return.
+
+    ``sources`` is intentionally absent: the API always serves the validated
+    evidence sources, so the model never has to restate or invent citations.
+    """
+
+    summary: str = Field(min_length=1)
+    diagnosis: ExplanationDiagnosis
+    symptoms: list[str] = Field(default_factory=list)
+    possible_causes: list[str] = Field(default_factory=list)
+    management: ManagementRecommendations = Field(default_factory=ManagementRecommendations)
+    pesticides: list[PesticideDraft] = Field(default_factory=list)
+    prevention: list[str] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ImageReference(StrictSchema):
