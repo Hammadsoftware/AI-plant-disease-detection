@@ -7,7 +7,10 @@ import type {
   StreamedDiagnosis,
 } from "@/lib/types";
 
-const API_URL = "/plant-api";
+const API_ORIGIN = (
+  process.env.NEXT_PUBLIC_API_URL ?? "https://plant-disease-api-1-0-1.onrender.com"
+).replace(/\/$/, "");
+const API_URL = `${API_ORIGIN}/api/v1`;
 
 export class PlantApiError extends Error implements ApiErrorShape {
   status: number | null;
@@ -22,6 +25,9 @@ export class PlantApiError extends Error implements ApiErrorShape {
 function friendlyError(status: number, detail?: string): string {
   if (status === 400 || status === 413 || status === 422) {
     return detail || "PlantAI couldn’t analyze this image. Please try another clear leaf photo.";
+  }
+  if (status === 404) {
+    return "The live diagnosis stream is not available on the deployed AI service.";
   }
   if (status === 503) return "PlantAI is temporarily unavailable. Please try again in a moment.";
   if (status >= 500) return "The analysis service encountered a problem. Please try again shortly.";
