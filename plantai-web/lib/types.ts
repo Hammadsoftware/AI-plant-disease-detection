@@ -138,23 +138,9 @@ export interface HistoryItem {
   disease: string;
   confidence: number;
   result: DiagnosisResponse;
-  streamedContent?: string;
 }
 
-export type StreamPhase = "analyzing" | "researching" | "generating";
-
-export interface StreamCallbacks {
-  onPhase: (phase: StreamPhase, message: string) => void;
-  onToken: (content: string) => void;
-  onMetadata: (result: DiagnosisResponse) => void;
-}
-
-export interface StreamedDiagnosis {
-  content: string;
-  result: DiagnosisResponse | null;
-}
-
-export type ServiceStatus = "checking" | "online" | "unavailable";
+export type ServiceStatus = "idle" | "online" | "unavailable";
 
 export interface ApiErrorShape {
   status: number | null;

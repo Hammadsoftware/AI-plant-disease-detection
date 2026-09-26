@@ -6,7 +6,7 @@ import { CameraCapture } from "@/components/diagnosis/CameraCapture";
 import { DiagnosisConversation } from "@/components/diagnosis/DiagnosisConversation";
 import { ImagePreview } from "@/components/diagnosis/ImagePreview";
 import { ImageUploader } from "@/components/diagnosis/ImageUploader";
-import { checkHealth, diagnoseLeafStream, PlantApiError } from "@/lib/api";
+import { diagnoseLeaf, PlantApiError } from "@/lib/api";
 import { loadHistory, saveHistory } from "@/lib/storage";
 import type { DiagnosisResponse, HistoryItem, ServiceStatus } from "@/lib/types";
 import { fileToDataUrl, optimizeImage, validateImageFile } from "@/lib/utils";
@@ -22,18 +22,14 @@ export function Dashboard() {
   const [selected, setSelected] = useState<SelectedImage | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [phaseMessage, setPhaseMessage] = useState("Analyzing your plant leaf...");
-  const [streamedContent, setStreamedContent] = useState("");
-  const [stopped, setStopped] = useState(false);
   const [result, setResult] = useState<DiagnosisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [serviceStatus, setServiceStatus] = useState<ServiceStatus>("checking");
+  const [serviceStatus, setServiceStatus] = useState<ServiceStatus>("idle");
   const uploadFallbackRef = useRef<HTMLInputElement>(null);
   const conversationEndRef = useRef<HTMLDivElement>(null);
   const activeRequestRef = useRef<AbortController | null>(null);
-  const stopRequestedRef = useRef(false);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setHistory(loadHistory()));
@@ -41,22 +37,14 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
-    const controller = new AbortController();
-    checkHealth(controller.signal)
-      .then((health) => setServiceStatus(health.status === "ok" && health.model_loaded ? "online" : "unavailable"))
-      .catch(() => setServiceStatus("unavailable"));
-    return () => controller.abort();
-  }, []);
-
-  useEffect(() => {
     if (submitted) conversationEndRef.current?.scrollIntoView({ block: "end" });
-  }, [submitted, loading, result, error, streamedContent]);
+  }, [submitted, loading, result, error]);
 
   useEffect(() => () => activeRequestRef.current?.abort(), []);
 
   const newScan = useCallback(() => {
-    activeRequestRef.current?.abort(); activeRequestRef.current = null; stopRequestedRef.current = false;
-    setSelected(null); setSubmitted(false); setLoading(false); setPhaseMessage("Analyzing your plant leaf..."); setStreamedContent(""); setStopped(false); setResult(null); setError(null); setSelectionError(null); setSidebarOpen(false);
+    activeRequestRef.current?.abort(); activeRequestRef.current = null;
+    setSelected(null); setSubmitted(false); setLoading(false); setResult(null); setError(null); setSelectionError(null); setSidebarOpen(false);
   }, []);
 
   const selectFile = useCallback(async (incoming: File) => {
@@ -67,7 +55,7 @@ export function Dashboard() {
       const file = await optimizeImage(incoming);
       const preview = await fileToDataUrl(file);
       setSelected({ file, preview, filename: file.name, size: file.size });
-      setSubmitted(false); setPhaseMessage("Analyzing your plant leaf..."); setStreamedContent(""); setStopped(false); setResult(null); setError(null); setSidebarOpen(false);
+      setSubmitted(false); setResult(null); setError(null); setSidebarOpen(false);
     } catch {
       setSelectionError("PlantAI couldn’t prepare this image. Please choose another photo.");
     }
@@ -76,31 +64,24 @@ export function Dashboard() {
   const analyze = useCallback(async () => {
     if (!selected?.file || loading) return;
     const controller = new AbortController();
-    activeRequestRef.current?.abort(); activeRequestRef.current = controller; stopRequestedRef.current = false;
-    setSubmitted(true); setLoading(true); setPhaseMessage("Analyzing your plant leaf..."); setStreamedContent(""); setStopped(false); setResult(null); setError(null);
+    activeRequestRef.current?.abort(); activeRequestRef.current = controller;
+    setSubmitted(true); setLoading(true); setResult(null); setError(null);
     try {
-      const response = await diagnoseLeafStream(selected.file, {
-        onPhase: (_phase, message) => setPhaseMessage(message),
-        onToken: (token) => setStreamedContent((current) => current + token),
-        onMetadata: (metadata) => setResult(metadata),
-      }, controller.signal);
-      if (response.result) {
-        setResult(response.result);
-        const item: HistoryItem = {
-          id: crypto.randomUUID(), timestamp: new Date().toISOString(), imagePreview: selected.preview,
-          filename: selected.filename, fileSize: selected.size, disease: response.result.diagnosis.disease,
-          confidence: response.result.diagnosis.confidence, result: response.result, streamedContent: response.content,
-        };
-        setHistory((current) => saveHistory([item, ...current]));
-      }
+      const response = await diagnoseLeaf(selected.file, controller.signal);
+      setResult(response); setServiceStatus("online");
+      const item: HistoryItem = {
+        id: crypto.randomUUID(), timestamp: new Date().toISOString(), imagePreview: selected.preview,
+        filename: selected.filename, fileSize: selected.size, disease: response.diagnosis.disease,
+        confidence: response.diagnosis.confidence, result: response,
+      };
+      setHistory((current) => saveHistory([item, ...current]));
     } catch (cause) {
       const aborted = cause instanceof DOMException && cause.name === "AbortError";
-      if (aborted && stopRequestedRef.current) {
-        setStopped(true);
-      } else if (!aborted) {
-        const message = cause instanceof PlantApiError && cause.status !== null
+      if (!aborted) {
+        const message = cause instanceof PlantApiError
           ? cause.message
-          : "Something went wrong while generating the diagnosis.";
+          : "PlantAI couldn’t analyze this image. Please try another clear leaf photo.";
+        if (!(cause instanceof PlantApiError) || cause.status === null || cause.status >= 500) setServiceStatus("unavailable");
         setError(message);
       }
     } finally {
@@ -109,16 +90,9 @@ export function Dashboard() {
     }
   }, [loading, selected]);
 
-  const stopGeneration = useCallback(() => {
-    stopRequestedRef.current = true;
-    activeRequestRef.current?.abort();
-    setLoading(false);
-    setStopped(true);
-  }, []);
-
   const restoreHistory = (item: HistoryItem) => {
     setSelected({ file: null, preview: item.imagePreview, filename: item.filename, size: item.fileSize });
-    setSubmitted(true); setPhaseMessage("Analyzing your plant leaf..."); setStreamedContent(item.streamedContent ?? ""); setStopped(false); setResult(item.result); setError(null); setLoading(false); setSidebarOpen(false);
+    setSubmitted(true); setResult(item.result); setError(null); setLoading(false); setSidebarOpen(false);
   };
 
   const deleteHistory = (id: string) => setHistory((current) => saveHistory(current.filter((item) => item.id !== id)));
@@ -132,7 +106,7 @@ export function Dashboard() {
           {!selected && <EmptyState onSelect={(file) => void selectFile(file)} onCamera={() => setCameraOpen(true)}/>} 
           {selectionError && <div role="alert" className="mx-auto mb-5 max-w-2xl rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{selectionError}</div>}
           {selected && !submitted && <div className="mx-auto max-w-2xl space-y-4"><div><p className="text-xs font-bold uppercase tracking-[.14em] text-emerald-700">Image ready</p><h1 className="mt-2 text-2xl font-semibold tracking-[-.04em] text-emerald-950">Review before analysis</h1><p className="mt-2 text-sm leading-6 text-emerald-950/50">Your image stays here until you ask PlantAI to analyze it.</p></div><ImagePreview preview={selected.preview} filename={selected.filename} fileSize={selected.size} onRemove={newScan}/><ImageUploader onSelect={(file) => void selectFile(file)} onCamera={() => setCameraOpen(true)} compact/></div>}
-          {selected && submitted && <DiagnosisConversation preview={selected.preview} filename={selected.filename} loading={loading} phaseMessage={phaseMessage} streamedContent={streamedContent} stopped={stopped} result={result} error={error} onStop={stopGeneration} onRetry={() => void analyze()} onNewScan={newScan}/>} 
+          {selected && submitted && <DiagnosisConversation preview={selected.preview} filename={selected.filename} loading={loading} result={result} error={error} onRetry={() => void analyze()} onNewScan={newScan}/>} 
           <div ref={conversationEndRef}/>
         </div>
       </section>
