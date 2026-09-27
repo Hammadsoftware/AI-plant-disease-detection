@@ -1,22 +1,182 @@
+<div align="center">
 
-# Plant Disease Evidence API
+# PlantAI
 
-Production-oriented FastAPI backend that preserves the supplied plant-disease classifier and adds a modular LangGraph evidence workflow, configurable live search, pesticide provenance checks, and Groq synthesis.
+### Evidence-backed plant disease diagnosis
 
-```text
-Leaf image
-  -> immutable TorchScript classifier
-  -> disease + confidence + top 3
-  -> LangGraph supervisor
-       -> disease research ---------\
-       -> treatment/IPM research ----+-> evidence validation
-       -> pesticide research -------/
-  -> Groq synthesis
-  -> deterministic final validation
-  -> structured API response with evidence and source URLs
+Upload a leaf image, classify it with EfficientNetV2-S, and receive a safety-checked explanation grounded in live agricultural evidence.
+
+[![Next.js](https://img.shields.io/badge/Next.js-App_Router-000000?logo=nextdotjs)](https://nextjs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-EfficientNetV2--S-EE4C2C?logo=pytorch)](https://pytorch.org/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Agent_Workflow-1C3C3C)](https://langchain-ai.github.io/langgraph/)
+[![Vercel](https://img.shields.io/badge/Frontend-Vercel-000000?logo=vercel)](https://plantai-web.vercel.app/)
+
+[**Open live app**](https://plantai-web.vercel.app/) · [**Start diagnosis**](https://plantai-web.vercel.app/dashboard) · [**API docs**](https://plant-disease-api-1-0-1.onrender.com/docs)
+
+</div>
+
+PlantAI is a full-stack diagnosis platform built around a simple rule: the vision model owns the diagnosis, while AI research services may explain and contextualize it. The Next.js client handles image capture and results, FastAPI owns the API boundary, TorchScript performs deterministic inference, and LangGraph coordinates optional research and synthesis.
+
+> The API runs on Render and may need a short cold-start period after inactivity.
+
+## Contents
+
+- [Architecture](#architecture)
+- [Core concepts](#core-concepts)
+- [Features](#features)
+- [Technology stack](#technology-stack)
+- [Project layout](#project-layout)
+- [LangGraph workflow](#langgraph-workflow)
+- [Safety model](#evidence-and-pesticide-safety)
+- [Run locally](#run-locally)
+- [API reference](#api)
+- [Tests](#tests)
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U[User] -->|Upload, drop, or camera| WEB
+
+    subgraph Client[Client · Vercel]
+        WEB[Next.js App Router]
+        PREP[Validate and optimize image]
+        UI[Results and local history]
+        WEB --> PREP
+        WEB --> UI
+    end
+
+    PREP -->|multipart/form-data| API
+
+    subgraph Service[Application service · Render]
+        API[FastAPI boundary]
+        ORCH[Diagnosis service]
+        VALIDATE[Deterministic final validator]
+        API --> ORCH
+        ORCH --> VALIDATE
+    end
+
+    subgraph Intelligence[ML and evidence pipeline]
+        MODEL[EfficientNetV2-S TorchScript]
+        GRAPH[LangGraph supervisor]
+        SEARCH[Disease · treatment · pesticide research]
+        LLM[Groq structured synthesis]
+        MODEL -->|Authoritative prediction| GRAPH
+        GRAPH --> SEARCH
+        SEARCH --> LLM
+    end
+
+    ORCH --> MODEL
+    LLM --> VALIDATE
+    VALIDATE -->|Typed diagnosis response| UI
+
+    SEARCH -.->|Live search| TAVILY[(Tavily)]
+    LLM -.->|LLM API| GROQ[(Groq)]
+    UI -.->|Up to 8 scans| STORAGE[(Browser localStorage)]
 ```
 
-The vision prediction is authoritative for this workflow. Search and Groq can explain it, but cannot rename or replace it.
+### Component boundaries
+
+| Component | Responsibility | Does not own |
+|---|---|---|
+| Next.js web app | Capture, validate, optimize, submit, and present leaf diagnoses | Model inference or credential handling |
+| FastAPI API | Validate requests, control concurrency, orchestrate services, and return typed responses | Reinterpreting model output |
+| TorchScript model | Produce the class probabilities, top predictions, and confidence | Treatment or pesticide advice |
+| LangGraph workflow | Run research branches, join evidence, and coordinate explanation generation | Final authority over the diagnosis |
+| Search service | Retrieve and rank disease, IPM, and pesticide sources | Executing instructions found in retrieved text |
+| Groq service | Convert evidence into a structured, readable explanation | Changing the model class or inventing evidence |
+| Final validator | Enforce prediction integrity, evidence support, and pesticide policy | Performing probabilistic inference |
+
+### Request lifecycle
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Web as Next.js client
+    participant API as FastAPI
+    participant ML as TorchScript model
+    participant Graph as LangGraph
+    participant Search as Tavily
+    participant LLM as Groq
+
+    User->>Web: Select or capture leaf image
+    Web->>Web: Validate, optimize, and preview
+    User->>Web: Analyze Leaf
+    Web->>API: POST /api/v1/diagnose
+    API->>ML: Run immutable inference
+    ML-->>API: Class, confidence, top 3
+    API->>Graph: Start evidence workflow
+    par Disease evidence
+        Graph->>Search: Research disease
+    and Treatment evidence
+        Graph->>Search: Research IPM and treatment
+    and Pesticide evidence
+        Graph->>Search: Research products and registration
+    end
+    Search-->>Graph: Ranked sources
+    Graph->>LLM: Synthesize validated evidence
+    LLM-->>Graph: Structured explanation
+    Graph-->>API: Evidence and explanation
+    API->>API: Apply deterministic policy checks
+    API-->>Web: Diagnosis, guidance, warnings, sources
+    Web-->>User: Render result and save local history
+```
+
+### Architectural guarantees
+
+- The TorchScript prediction and confidence are immutable after inference.
+- Research and generation are optional enrichments; their failure never fabricates a replacement diagnosis.
+- Retrieved content is data, never executable agent instruction.
+- Every displayed evidence source retains its URL, publisher, query, type, and authority classification.
+- Chemical recommendations pass a deterministic validation layer after LLM generation.
+- Frontend history remains in the browser and is not a server-side identity or tracking system.
+
+## Core concepts
+
+- **Image-first diagnosis:** users upload a JPEG, PNG, or WebP leaf image or take a photo with their device camera.
+- **Client-side preparation:** the frontend validates and optimizes the image before sending it, then waits for an explicit **Analyze Leaf** action.
+- **Authoritative ML prediction:** the immutable EfficientNetV2-S model produces the disease class, confidence score, top three predictions, and all class probabilities.
+- **Agentic research:** LangGraph coordinates parallel disease, treatment/IPM, and pesticide research branches before joining them for validation.
+- **Evidence-grounded explanation:** Tavily supplies live sources and Groq turns validated evidence into readable symptoms, causes, management, prevention, and next steps.
+- **Safety by validation:** deterministic checks prevent the language model from changing the classifier output, remove unsupported claims, and restrict pesticide guidance to sourced evidence.
+- **Graceful degradation:** the ML diagnosis remains available when search or Groq is disabled, unavailable, or times out.
+- **Transparent uncertainty:** low-confidence results are marked uncertain and include guidance to use a clearer image or consult a qualified local expert.
+- **Private local history:** the frontend keeps up to eight recent scans in browser `localStorage`; no separate user account or history database is required.
+- **Modular architecture:** inference, research providers, synthesis, validation, and presentation are separate components that can evolve independently.
+
+## Features
+
+### Frontend
+
+- Responsive landing page and diagnosis dashboard.
+- Drag-and-drop upload, file picker, and device-camera capture.
+- Image type/size validation, preview, optimization, and explicit submission.
+- Clear loading, retry, offline/unavailable, and uncertain-result states.
+- Diagnosis confidence, explanation, symptoms, possible causes, management options, prevention, warnings, and recommendations.
+- Evidence cards with authority indicators and links to original sources.
+- Pesticide details with active ingredient and registration status when supported by evidence.
+- Recent scan restoration and deletion using browser-local storage.
+
+### Backend
+
+- FastAPI health, diagnosis, and processed-image endpoints with OpenAPI documentation.
+- EfficientNetV2-S inference across 38 plant disease classes.
+- Parallel LangGraph research workflow with typed state and fan-out/fan-in execution.
+- Configurable Tavily search and Groq synthesis integrations.
+- Evidence ranking, claim validation, prompt-injection resistance, and pesticide safety checks.
+- Metadata-stripped image processing, strict upload validation, concurrency controls, and safe failure responses.
+
+## Technology stack
+
+| Layer | Technologies |
+|---|---|
+| Frontend | Next.js App Router, React, TypeScript, Tailwind CSS, Framer Motion, Lucide React |
+| API | FastAPI, Pydantic, Uvicorn |
+| Machine learning | PyTorch, TorchScript, EfficientNetV2-S, Torchvision, Pillow |
+| Agent workflow | LangGraph |
+| Search and synthesis | Tavily, Groq OpenAI-compatible API |
+| Hosting | Vercel frontend, Render backend |
 
 ## Existing model audit
 
@@ -39,25 +199,24 @@ The existing artifact and inference code were inspected before the agentic layer
 ## Project layout
 
 ```text
-backend/
-├── app/
-│   ├── main.py
-│   ├── api/routes/{health.py,diagnosis.py}
-│   ├── agents/{graph.py,state.py,nodes.py,prompts.py}
-│   ├── services/
-│   │   ├── plant_disease_model.py
-│   │   ├── groq_service.py
-│   │   ├── web_search_service.py
-│   │   └── diagnosis_service.py
-│   ├── schemas/{diagnosis.py,research.py,pesticide.py}
-│   ├── core/config.py
-│   └── utils/image.py
-├── models/
-├── uploads/
-├── tests/smoke_test.py
-├── .env
-├── .env.example
-├── requirements.txt
+.
+├── plantai-web/                 # Next.js frontend
+│   ├── app/                     # Landing page, dashboard, layout, styles
+│   ├── components/              # Landing, dashboard, and diagnosis UI
+│   ├── lib/                     # API client, browser storage, types, utilities
+│   └── public/                  # Static frontend assets
+├── backend/                     # FastAPI and ML service
+│   ├── app/
+│   │   ├── api/routes/          # Health, diagnosis, and image routes
+│   │   ├── agents/              # LangGraph state, nodes, prompts, and graph
+│   │   ├── services/            # Model, Groq, search, and orchestration
+│   │   ├── schemas/             # Diagnosis, research, and pesticide models
+│   │   ├── core/config.py
+│   │   └── utils/image.py
+│   ├── models/                  # TorchScript checkpoint and class labels
+│   ├── tests/smoke_test.py
+│   ├── .env.example
+│   └── requirements.txt
 └── README.md
 ```
 
@@ -65,16 +224,19 @@ backend/
 
 The compiled graph uses explicit nodes and a real fan-out/fan-in join:
 
-```text
-START
-  -> validate_prediction
-  -> extract_crop_and_disease
-  -> disease_research ---------\
-  -> treatment_research --------+-> evidence_validation
-  -> pesticide_research -------/
-  -> generate_explanation
-  -> validate_final_response
-  -> END
+```mermaid
+flowchart TD
+    START([Start]) --> VP[Validate prediction]
+    VP --> EX[Extract crop and disease]
+    EX --> DR[Disease research]
+    EX --> TR[Treatment and IPM research]
+    EX --> PR[Pesticide research]
+    DR --> EV[Evidence validation]
+    TR --> EV
+    PR --> EV
+    EV --> GE[Generate explanation]
+    GE --> VF[Validate final response]
+    VF --> END([End])
 ```
 
 `PlantDiagnosisState` is a typed state containing the model prediction, crop, three research bundles, validated evidence, final explanation, uncertainty state, warnings, and errors. Error/warning fields use LangGraph reducers so parallel branches can contribute safely.
@@ -109,7 +271,35 @@ The final validator applies additional policy after Groq returns structured JSON
 
 No pesticide list is hardcoded. If registration or application information cannot be verified, it remains unverified or is omitted.
 
-## Setup
+## Run locally
+
+### Frontend
+
+Node.js 20 or newer is recommended.
+
+```bash
+cd plantai-web
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+Set the API origin in `.env.local`:
+
+```dotenv
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+Open <http://localhost:3000> for the landing page or <http://localhost:3000/dashboard> to start a diagnosis.
+
+Frontend checks:
+
+```bash
+npm run lint
+npm run build
+```
+
+### Backend
 
 Python 3.10 or newer is required.
 
@@ -127,7 +317,7 @@ For a CPU-only host, install the CPU PyTorch wheels before `requirements.txt` to
 python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 ```
 
-### Groq
+#### Groq
 
 Create a Groq API key and add it to the environment template:
 
@@ -144,7 +334,7 @@ The backend calls the Groq OpenAI-compatible endpoint at `https://api.groq.com` 
 
 Groq rejects oversized requests with HTTP 413 well below the advertised context window, so the service condenses the evidence payload to `GROQ_MAX_PAYLOAD_CHARS` before sending it. Condensing keeps authoritative sources and category coverage, drops the `claims` array that duplicates each source snippet, and truncates long snippets. Only the model sees the condensed copy; the final validator still checks the returned explanation against the complete evidence set.
 
-### Tavily
+#### Tavily
 
 Copy the environment template and add a Tavily key:
 
@@ -159,7 +349,7 @@ SEARCH_PROVIDER=tavily
 
 Keys are never hardcoded or returned. `.env` is ignored. `SEARCH_PROVIDER=disabled` explicitly disables live search. The current provider boundary is designed so another implementation can be added without changing graph nodes.
 
-### Start
+#### Start
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000
