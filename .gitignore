@@ -48,6 +48,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Local session captures
+bob_sessions/
+
 # Swap files
 *.swp
 *.swo
